@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+    <script src="https://cdn.what3words.com/javascript-components@4-latest/dist/what3words/what3words.js?key=DIPBZL9D"></script>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.5.1/dist/leaflet.css"
+      integrity="sha512-xwE/Az9zrjBIphAcBb3F6JVqxf46+CDLwfLMHloNu6KEQCAWi6HcDUbeOfBIptF7tcCzusKFjFw2yuvEpDL9wQ=="
+      crossorigin=""
+    />
+    <script
+      src="https://unpkg.com/leaflet@1.5.1/dist/leaflet.js"
+      integrity="sha512-GffPMF3RvMeYyc1LWMHtK8EbPv0iNZ8/oTtHPx9/cc2ILxQ+u905qIwdpULaqDkyBKgOaB57QTMg7ztg8Jm2Og=="
+      crossorigin=""
+    ></script>
+    <title>Grid Section Map Overlay (Leaflet)</title>
+  </head>
+  <body>
+    <div id="map" style="width: 100%; height: 500px;"></div>
+    <h6 id="lat"></h6>
+    <h6 id="lng"></h6>
+    <h6 id="id"></h6>
+    <script>
+    // create a map in the "map" div, set the view to a given place and zoom
+var map = L.map('map').setView([-21.76668191838429, -41.32157124227159], 13);
+
+// add an OpenStreetMap tile layer
+L.tileLayer('http://{s}.tile.osm.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; <a href="http://osm.org/copyright">OpenStreetMap</a> contributors'
+}).addTo(map);
+
+L.VirtualGrid = L.FeatureGroup.extend({
+  include: L.Mixin.Events,
+  options: {
+    cellSize: 64,
+    delayFactor: 2.5,
+    style: {
+      stroke: true,
+      color: '#3ac1f0',
+      dashArray: null,
+      lineCap: null,
+      lineJoin: null,
+      weight: 2,
+      opacity: 1,
+
+      //fill: true,
+      //fillColor: null, //same as color by default
+      //fillOpacity: 0.5,
+
+      clickable: true
+    }
+  },
+  
+  initialize: function(options){
+    L.Util.setOptions(this, options);
+    L.FeatureGroup.prototype.initialize.call(this, [], options);
+  },
+  onAdd: function(map){
+    L.FeatureGroup.prototype.onAdd.call(this, map);
+    this._map = map;
+    this._cells = [];
+    this._setupGrid(map.getBounds());
+
+    map.on("move", this._moveHandler, this);
+    map.on("zoomend", this._zoomHandler, this);
+    map.on("resize", this._resizeHandler, this);
+  },
+  onRemove: function(map){
+    L.FeatureGroup.prototype.onRemove.call(this, map);
+    map.off("move", this._moveHandler, this);
+    map.off("zoomend", this._zoomHandler, this);
+    map.off("resize", this._resizeHandler, this);
+  },
+  _clearLayer: function(e) {
+    this._cells = [];
+  },
+  _moveHandler: function(e){
+    this._renderCells(e.target.getBounds());
+  },
+  _zoomHandler: function(e){
+    this.clearLayers();
+    this._renderCells(e.target.getBounds());
+  },
+  _renderCells: function(bounds) {
+    var cells = this._cellsInBounds(bounds);
+    this.fire("newcells", cells);
+    for (var i = cells.length - 1; i >= 0; i--) {
+      var cell = cells[i];
+      if(this._loadedCells.indexOf(cell.id) === -1){
+        (function(cell, i){
+          setTimeout(this.addLayer.bind(this, L.rectangle(cell.bounds, this.options.style)), this.options.delayFactor*i);
+        }.bind(this))(cell, i);
+        this._loadedCells.push(cell.id);
+      }
+    }
+  },
+  _resizeHandler: function(e) {
+    this._setupSize();
+  },
+  _setupSize: function(){
+    this._rows = Math.ceil(this._map.getSize().x / this._cellSize);
+    this._cols = Math.ceil(this._map.getSize().y / this._cellSize);
+  },
+  _setupGrid: function(bounds){
+    this._origin = this._map.project(bounds.getNorthWest());
+    this._cellSize = this.options.cellSize;
+    this._setupSize();
+    this._loadedCells = [];
+    this.clearLayers();
+    this._renderCells(bounds);
+  },
+  _cellPoint:function(row, col){
+    var x = this._origin.x + (row*this._cellSize);
+    var y = this._origin.y + (col*this._cellSize);
+    return new L.Point(x, y);
+  },
+  _cellExtent: function(row, col){
+    var swPoint = this._cellPoint(row, col);
+    var nePoint = this._cellPoint(row-1, col-1);
+    var sw = this._map.unproject(swPoint);
+    var ne = this._map.unproject(nePoint);
+    return new L.LatLngBounds(ne, sw);
+  },
+  _cellsInBounds: function(bounds){
+    var offset = this._map.project(bounds.getNorthWest());
+    var center = bounds.getCenter();
+    var offsetX = this._origin.x - offset.x;
+    var offsetY = this._origin.y - offset.y;
+    var offsetRows = Math.round(offsetX / this._cellSize);
+    var offsetCols = Math.round(offsetY / this._cellSize);
+    var cells = [];
+    for (var i = 0; i <= this._rows; i++) {
+      for (var j = 0; j <= this._cols; j++) {
+        var row = i-offsetRows;
+        var col = j-offsetCols;
+        var cellBounds = this._cellExtent(row, col);
+        var cellId = row+":"+col;
+        cells.push({
+          id: cellId,
+          bounds: cellBounds,
+          distance:cellBounds.getCenter().distanceTo(center)
+        });
+      }
+    }
+    cells.sort(function (a, b) {
+      return a.distance - b.distance;
+    });
+    return cells;
+  }
+});
+
+L.virtualGrid = function(url, options){
+  return new L.VirtualGrid(options);
+};
+
+
+
+var grid = L.virtualGrid({
+  cellSize: 64
+}).addTo(map);
+
+grid.on('click', function(e) {
+    e.layer.setStyle({fillColor :'blue',fillOpacity: 2}) 
+       console.log(e);
+       document.getElementById("lat").innerHTML = "Latitude: "+e.latlng.lat;
+      document.getElementById("lng").innerHTML = "Longitude: "+e.latlng.lng;
+      document.getElementById("id").innerHTML = "Id: "+e.layer._leaflet_id;
+      });
+      
+    </script>
+  </body>
+</html>
